@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="UCRobloxExternal/UCRobloxExternal.vcxproj" Id="6edf61ff-35ea-4e8f-84d3-50d8f112c931" />
+</Solution>
