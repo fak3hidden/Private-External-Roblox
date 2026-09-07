@@ -59,6 +59,32 @@ bool RescanPointers(uintptr_t baseAddr) {
             Globals::localPlayer = RBX::RbxInstance(locPlr);
         }
 
+        // --- Auto-detect Instance::Name offset ---
+        // Known-good service names vote for the right candidate.
+        {
+            const uintptr_t candidates[] = { 0x98, 0x70, 0x8 };
+            bool resolved = false;
+            for (uintptr_t cand : candidates) {
+                Offsets::Instance::Name = cand;
+                int votes = 0;
+                if (Globals::dataModel.GetName() == "Game") votes++;
+                if (Globals::workspace.GetName() == "Workspace") votes++;
+                if (Globals::players.GetName() == "Players") votes++;
+                if (votes >= 2) {
+                    std::cout << "[+] Instance::Name auto-resolved: 0x" << std::hex << cand << std::dec
+                              << " (" << votes << "/3 votes)\n";
+                    resolved = true;
+                    break;
+                }
+            }
+            if (!resolved) {
+                Offsets::Instance::Name = 0x8;
+                std::cout << "[!] Instance::Name auto-resolve failed, keeping 0x8\n";
+            } else {
+                std::cout << "[+] LocalPlayer name: " << Globals::localPlayer.GetName() << "\n";
+            }
+        }
+
         return (Globals::dataModel.Addr != 0 && Globals::workspace.Addr != 0);
     }
     catch (...) {

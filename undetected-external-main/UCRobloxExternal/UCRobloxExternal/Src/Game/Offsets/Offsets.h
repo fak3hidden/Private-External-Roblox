@@ -247,7 +247,7 @@ namespace Offsets {
         inline constexpr uintptr_t ClassBase = 0x1b0;
         inline constexpr uintptr_t ClassDescriptor = 0x18;
         inline constexpr uintptr_t ClassName = 0x8;
-        inline constexpr uintptr_t Name = 0x8;
+        inline uintptr_t Name = 0x8; // Auto-resolved at startup in RescanPointers (dumpers mislabel this)
         inline constexpr uintptr_t NameContainer = 0x70;
         inline constexpr uintptr_t Parent = 0x68;
         inline constexpr uintptr_t This = 0x8;
