@@ -24,6 +24,7 @@
 #include <fstream>
 #include <string>
 #include <iomanip>
+#include <cstdio>
 
 std::atomic<bool> running(true);
 std::atomic<bool> gameAttached(false);
@@ -59,29 +60,40 @@ bool RescanPointers(uintptr_t baseAddr) {
             Globals::localPlayer = RBX::RbxInstance(locPlr);
         }
 
-        // --- Auto-detect Instance::Name offset ---
-        // Known-good service names vote for the right candidate.
+        // --- Auto-detect Instance::Name offset (sweep 0x8-0x200) ---
+        // Known-good service names ("Game"/"Workspace"/"Players") vote for the right offset.
         {
-            const uintptr_t candidates[] = { 0x98, 0x70, 0x8 };
-            bool resolved = false;
-            for (uintptr_t cand : candidates) {
+            auto testNameOffset = [&](uintptr_t cand) -> int {
                 Offsets::Instance::Name = cand;
                 int votes = 0;
                 if (Globals::dataModel.GetName() == "Game") votes++;
                 if (Globals::workspace.GetName() == "Workspace") votes++;
                 if (Globals::players.GetName() == "Players") votes++;
-                if (votes >= 2) {
-                    std::cout << "[+] Instance::Name auto-resolved: 0x" << std::hex << cand << std::dec
-                              << " (" << votes << "/3 votes)\n";
-                    resolved = true;
-                    break;
+                return votes;
+            };
+            uintptr_t foundName = 0;
+            int foundVotes = 0;
+            // Most likely candidates first, then exhaustive sweep of the Instance header.
+            const uintptr_t first[] = { 0x98, 0x70, 0x8 };
+            for (uintptr_t cand : first) {
+                int v = testNameOffset(cand);
+                if (v >= 2) { foundName = cand; foundVotes = v; break; }
+            }
+            if (!foundName) {
+                for (uintptr_t cand = 0x10; cand <= 0x200; cand += 8) {
+                    if (cand == 0x98 || cand == 0x70) continue;
+                    int v = testNameOffset(cand);
+                    if (v >= 2) { foundName = cand; foundVotes = v; break; }
                 }
             }
-            if (!resolved) {
-                Offsets::Instance::Name = 0x8;
-                std::cout << "[!] Instance::Name auto-resolve failed, keeping 0x8\n";
-            } else {
+            if (foundName) {
+                Offsets::Instance::Name = foundName;
+                std::cout << "[+] Instance::Name auto-resolved: 0x" << std::hex << foundName << std::dec
+                          << " (" << foundVotes << "/3 votes)\n";
                 std::cout << "[+] LocalPlayer name: " << Globals::localPlayer.GetName() << "\n";
+            } else {
+                Offsets::Instance::Name = 0x8;
+                std::cout << "[!] Instance::Name sweep failed (0x8-0x200), keeping 0x8\n";
             }
         }
 
@@ -388,13 +400,16 @@ int main() {
             RBX::Vec2 ds = W2S::WorldToScreen(dp.position, viewMatrix);
             if (!(ds.X == 0.0f && ds.Y == 0.0f)) dbgProj++;
         }
+        char nameOffHex[8];
+        snprintf(nameOffHex, sizeof(nameOffHex), "%llX", (unsigned long long)Offsets::Instance::Name);
         std::string watermark = "Nowhere External | FPS: " + std::to_string(fps) +
             " | Players: " + std::to_string(static_cast<int>(PlayerCache::players.size())) +
             "/" + std::to_string(PlayerCache::debugRawCount) +
             " | VM: " + (vmOk ? "ok" : "BAD") +
             " | LP: " + (Globals::localPlayer.Addr != 0 ? "ok" : "none") +
             " | Heads: " + std::to_string(dbgHeads) +
-            " | Proj: " + std::to_string(dbgProj);
+            " | Proj: " + std::to_string(dbgProj) +
+            " | Name:0x" + nameOffHex;
         ImVec2 textSize = ImGui::CalcTextSize(watermark.c_str());
         ImVec2 watermarkPos = ImVec2(ImGui::GetIO().DisplaySize.x - textSize.x - 10, 10);
 
