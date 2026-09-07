@@ -214,22 +214,40 @@ namespace RBX {
             Coms->WriteMemory(Addr + Offsets::Camera::Rotation, rot);
         }
 
+        // Resolve this Player's character model. Robust to a stale ModelInstance
+        // offset: validates the pointer, then falls back to name lookup since
+        // character models are (almost) always named after the player.
         RbxInstance GetModelRef() const {
-            RbxInstance parent = GetParent();
-            if (parent.IsValid()) {
-                RbxInstance dataModel = parent.GetParent();
-                if (dataModel.IsValid()) {
-                    RbxInstance workspace = dataModel.FindChildByClass("Workspace");
-                    if (workspace.IsValid()) {
-                        RbxInstance charactersFolder = workspace.FindChild("Characters");
-                        if (charactersFolder.IsValid()) {
-                            RbxInstance charModel = charactersFolder.FindChild(GetName());
+            if (!IsValid()) return RbxInstance(0);
+
+            // Fast path: direct pointer, validated (characters are Models).
+            uintptr_t viaPtr = Coms->ReadMemory<uintptr_t>(Addr + Offsets::Player::ModelInstance);
+            if (viaPtr != 0) {
+                RbxInstance m(viaPtr);
+                if (m.GetClass() == "Model") return m;
+            }
+
+            // Fallback: Workspace/Characters/<Name> (Bad Business style), then Workspace/<Name>.
+            std::string name = GetName();
+            if (!name.empty()) {
+                RbxInstance parent = GetParent();
+                if (parent.IsValid()) {
+                    RbxInstance dataModel = parent.GetParent();
+                    if (dataModel.IsValid()) {
+                        RbxInstance workspace = dataModel.FindChildByClass("Workspace");
+                        if (workspace.IsValid()) {
+                            RbxInstance charactersFolder = workspace.FindChild("Characters");
+                            if (charactersFolder.IsValid()) {
+                                RbxInstance charModel = charactersFolder.FindChild(name);
+                                if (charModel.IsValid()) return charModel;
+                            }
+                            RbxInstance charModel = workspace.FindChild(name);
                             if (charModel.IsValid()) return charModel;
                         }
                     }
                 }
             }
-            return RbxInstance(Coms->ReadMemory<uintptr_t>(Addr + Offsets::Player::ModelInstance));
+            return RbxInstance(0);
         }
 
         float CalcDistance(const Vec3& targetPos) const {

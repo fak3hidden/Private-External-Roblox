@@ -312,6 +312,7 @@ int main() {
                      viewMatrix.data[10] != 0.0f || viewMatrix.data[15] != 0.0f);
         std::string watermark = "Nowhere External | FPS: " + std::to_string(fps) +
             " | Players: " + std::to_string(static_cast<int>(PlayerCache::players.size())) +
+            "/" + std::to_string(PlayerCache::debugRawCount) +
             " | VM: " + (vmOk ? "ok" : "BAD") +
             " | LP: " + (Globals::localPlayer.Addr != 0 ? "ok" : "none");
         ImVec2 textSize = ImGui::CalcTextSize(watermark.c_str());
