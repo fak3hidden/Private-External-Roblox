@@ -796,6 +796,10 @@ bool Menu::Combo(const char* Label, int* SelectedIndex, std::vector<const char*>
 
     if (BeginPopupEx(GetID(PopupStrId.c_str()), ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground))
     {
+        // Position/size first so the background below uses the correct rect on frame 1
+        SetWindowPos(FrameBB.Min + ImVec2(-2.0f, Height + Style.FramePadding.y - 2.0f), ImGuiCond_Always);
+        SetWindowSize(ImVec2(Width + 2.0f, GetFontSize() * Items.size() + Style.FramePadding.y * (Items.size() + 1) + 1.0f), ImGuiCond_Always);
+
         ImDrawList* DL = ImGui::GetWindowDrawList();
         ImVec2 PMin = GetWindowPos();
         ImVec2 PMax = PMin + GetWindowSize();
@@ -804,33 +808,20 @@ bool Menu::Combo(const char* Label, int* SelectedIndex, std::vector<const char*>
         DL->AddRect(PMin + ImVec2(1, 1), PMax - ImVec2(1, 1), Menu::Outline);
         DL->AddRect(PMin + ImVec2(2, 2), PMax - ImVec2(2, 2), IM_COL32(44, 44, 44, 255));
 
-        SetWindowPos(FrameBB.Min + ImVec2(-2.0f, Height + Style.FramePadding.y - 2.0f), ImGuiCond_Always);
-        SetWindowSize(ImVec2(Width + 2.0f, GetFontSize() * Items.size() + Style.FramePadding.y * (Items.size() + 1) + 1.0f), ImGuiCond_Always);
-
         PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
         for (int i = 0; i < (int)Items.size(); i++)
         {
-            ImVec2 ItemPos = GetCursorScreenPos();
-            ImGuiID ItemId = Window->GetID((std::string(Label) + Items[i] + std::to_string(i)).c_str());
             bool IsSelected = (i == *SelectedIndex);
 
+            // NOTE: SelectableLabel already draws the item text with its own
+            // hover/selection animation. The old code drew the same text a
+            // second time on top (offset by ~1px), which made every combo
+            // entry look blurry/doubled — so the extra draw was removed.
             if (Menu::SelectableLabel(Items[i], IsSelected, ImVec2(-0.1f, GetFontSize())))
             {
                 *SelectedIndex = i;
                 CloseCurrentPopup();
             }
-
-            bool ItemHovered = IsItemHovered();
-            static std::map<ImGuiID, float> ItemAnims;
-            float& AnimV = ItemAnims[ItemId];
-            AnimV = ImLerp(AnimV, ItemHovered ? 1.0f : 0.0f, LerpSpeed);
-
-            ImVec4 ColDim = ColorConvertU32ToFloat4(Menu::TextDim);
-            ImVec4 ColBright = ColorConvertU32ToFloat4(Menu::Text);
-            ImU32 CurrentItemCol = ColorConvertFloat4ToU32(ImLerp(ColDim, ColBright, AnimV));
-            if (IsSelected) CurrentItemCol = Menu::Accent;
-
-            Menu::DrawLabelShadow(DL, ItemPos + ImVec2(2.0f, 0.0f), CurrentItemCol, Items[i]);
         }
         PopStyleVar();
         EndPopup();

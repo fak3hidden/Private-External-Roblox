@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
+#include <unordered_map>
 #include <windows.h>
 
 namespace Visuals {
@@ -66,6 +67,128 @@ namespace Visuals {
         return !(s.X == 0.0f && s.Y == 0.0f);
     }
 
+    // ── Per-frame character part cache ───────────────────────────────────
+    // One GetChildList() per character per frame instead of ~30+. Every lookup
+    // is an external RPM round-trip, so this is a massive FPS win with 10+ players.
+    struct CharacterPartCache {
+        std::unordered_map<std::string, uintptr_t> parts;
+        std::unordered_map<std::string, uintptr_t> hitboxParts;
+        bool hasHitbox = false;
+
+        CharacterPartCache() = default;
+        explicit CharacterPartCache(const RBX::RbxInstance& character) {
+            if (!character.IsValid()) return;
+            for (auto& child : character.GetChildList()) {
+                if (child.Addr == 0) continue;
+                std::string name = child.GetName();
+                if (name.empty()) continue;
+                if (parts.find(name) == parts.end())
+                    parts.emplace(name, child.Addr);
+                if (name == "Hitbox") {
+                    hasHitbox = true;
+                    for (auto& hb : child.GetChildList()) {
+                        if (hb.Addr == 0) continue;
+                        std::string hname = hb.GetName();
+                        if (!hname.empty() && hitboxParts.find(hname) == hitboxParts.end())
+                            hitboxParts.emplace(hname, hb.Addr);
+                    }
+                }
+            }
+        }
+
+        uintptr_t Lookup(const char* name) const {
+            auto it = parts.find(name);
+            if (it != parts.end()) return it->second;
+            if (hasHitbox) {
+                auto jt = hitboxParts.find(name);
+                if (jt != hitboxParts.end()) return jt->second;
+            }
+            return 0;
+        }
+
+        // Same fallback/alias behavior as RbxInstance::FindCharacterPart
+        RBX::RbxInstance FindPart(const std::string& targetName) const {
+            uintptr_t direct = Lookup(targetName.c_str());
+            if (direct != 0) return RBX::RbxInstance(direct);
+
+            if (targetName == "Torso" || targetName == "UpperTorso") {
+                const char* c[] = { "Chest", "Abdomen", "Hips" };
+                for (auto* n : c) { uintptr_t a = Lookup(n); if (a) return RBX::RbxInstance(a); }
+            }
+            else if (targetName == "LowerTorso") {
+                const char* c[] = { "Abdomen", "Hips" };
+                for (auto* n : c) { uintptr_t a = Lookup(n); if (a) return RBX::RbxInstance(a); }
+            }
+            else if (targetName == "HumanoidRootPart") {
+                uintptr_t a = Lookup("Root");
+                if (a) return RBX::RbxInstance(a);
+            }
+            else if (targetName.find("Left") != std::string::npos && targetName.find("Arm") != std::string::npos) {
+                uintptr_t a = Lookup("LeftArm");
+                if (a) return RBX::RbxInstance(a);
+            }
+            else if (targetName.find("Right") != std::string::npos && targetName.find("Arm") != std::string::npos) {
+                uintptr_t a = Lookup("RightArm");
+                if (a) return RBX::RbxInstance(a);
+            }
+            else if (targetName.find("Left") != std::string::npos && targetName.find("Leg") != std::string::npos) {
+                uintptr_t a = Lookup("LeftLeg");
+                if (a) return RBX::RbxInstance(a);
+            }
+            else if (targetName.find("Right") != std::string::npos && targetName.find("Leg") != std::string::npos) {
+                uintptr_t a = Lookup("RightLeg");
+                if (a) return RBX::RbxInstance(a);
+            }
+            return RBX::RbxInstance(0);
+        }
+    };
+
+    // ── Offscreen indicator ──────────────────────────────────────────────
+    // NDC-correct direction: behind the camera (W < 0) the projection mirrors,
+    // so the vector must be flipped (the old atan2(-Y, X) pointed 180 degrees off).
+    // Marker is clamped onto a margin rect so it sits at the screen edge.
+    inline void DrawOffscreenArrow(ImDrawList* drawList, const RBX::Vec3& targetPos,
+        const RBX::Mat4& viewMatrix, float screenW, float screenH)
+    {
+        float X = (targetPos.X * viewMatrix.data[0]) + (targetPos.Y * viewMatrix.data[1]) + (targetPos.Z * viewMatrix.data[2]) + viewMatrix.data[3];
+        float Y = (targetPos.X * viewMatrix.data[4]) + (targetPos.Y * viewMatrix.data[5]) + (targetPos.Z * viewMatrix.data[6]) + viewMatrix.data[7];
+        float W = (targetPos.X * viewMatrix.data[12]) + (targetPos.Y * viewMatrix.data[13]) + (targetPos.Z * viewMatrix.data[14]) + viewMatrix.data[15];
+
+        float dirX = X;
+        float dirY = -Y; // Screen Y is flipped vs clip Y
+        if (W < 0.0f) { dirX = -dirX; dirY = -dirY; }
+        if (fabsf(dirX) < 1e-4f && fabsf(dirY) < 1e-4f) return; // Degenerate (on top of camera)
+
+        float angle = atan2f(dirY, dirX);
+        float dx = cosf(angle);
+        float dy = sinf(angle);
+
+        float centerX = screenW * 0.5f;
+        float centerY = screenH * 0.5f;
+
+        float rx = screenW * 0.5f - 40.0f;
+        float ry = screenH * 0.5f - 60.0f;
+        if (rx < 60.0f) rx = 60.0f;
+        if (ry < 60.0f) ry = 60.0f;
+        float t = (std::min)(rx / (fabsf(dx) + 1e-6f), ry / (fabsf(dy) + 1e-6f));
+        float indX = centerX + dx * t;
+        float indY = centerY + dy * t;
+
+        float size = 12.0f;
+        ImVec2 tip = ImVec2(indX + dx * size, indY + dy * size);
+        ImVec2 bl = ImVec2(indX + cosf(angle + 2.5f) * size, indY + sinf(angle + 2.5f) * size);
+        ImVec2 br = ImVec2(indX + cosf(angle - 2.5f) * size, indY + sinf(angle - 2.5f) * size);
+
+        // Black outline + red fill so it stays readable over bright scenes
+        float os = size + 2.5f;
+        drawList->AddTriangleFilled(
+            ImVec2(indX + dx * os, indY + dy * os),
+            ImVec2(indX + cosf(angle + 2.5f) * os, indY + sinf(angle + 2.5f) * os),
+            ImVec2(indX + cosf(angle - 2.5f) * os, indY + sinf(angle - 2.5f) * os),
+            IM_COL32(0, 0, 0, 255));
+        drawList->AddTriangleFilled(tip, bl, br, IM_COL32(255, 50, 50, 255));
+    }
+
     inline void Draw3DLine(ImDrawList* dl, const RBX::Vec3& a, const RBX::Vec3& b,
         const RBX::Mat4& vm, ImU32 col, float thickness = 1.5f)
     {
@@ -123,25 +246,26 @@ namespace Visuals {
             if (Vars::ESP::teamCheck && plr.isTeammate) continue;
 
             auto character = RBX::RbxInstance(plr.characterAddr);
+            CharacterPartCache pc(character); // Snapshot children once; ~2 RPM scans instead of ~33
 
-            auto head = character.FindCharacterPart("Head");
-            auto torso = character.FindCharacterPart("Torso");
+            auto head = pc.FindPart("Head");
+            auto torso = pc.FindPart("Torso");
 
             // Properly detect R6 vs R15 based on the presence of "Torso"
             bool isR6 = (torso.Addr != 0);
 
-            auto leftArm = character.FindCharacterPart(isR6 ? "Left Arm" : "LeftHand");
-            auto rightArm = character.FindCharacterPart(isR6 ? "Right Arm" : "RightHand");
-            auto leftLeg = character.FindCharacterPart(isR6 ? "Left Leg" : "LeftFoot");
-            auto rightLeg = character.FindCharacterPart(isR6 ? "Right Leg" : "RightFoot");
+            auto leftArm = pc.FindPart(isR6 ? "Left Arm" : "LeftHand");
+            auto rightArm = pc.FindPart(isR6 ? "Right Arm" : "RightHand");
+            auto leftLeg = pc.FindPart(isR6 ? "Left Leg" : "LeftFoot");
+            auto rightLeg = pc.FindPart(isR6 ? "Right Leg" : "RightFoot");
 
             if (!isR6) {
-                torso = character.FindCharacterPart("UpperTorso");
-                if (torso.Addr == 0) torso = character.FindCharacterPart("HumanoidRootPart");
+                torso = pc.FindPart("UpperTorso");
+                if (torso.Addr == 0) torso = pc.FindPart("HumanoidRootPart");
             }
             else {
                 // Fallback for R6 if Torso is unrendered
-                if (torso.Addr == 0) torso = character.FindCharacterPart("HumanoidRootPart");
+                if (torso.Addr == 0) torso = pc.FindPart("HumanoidRootPart");
             }
 
             if (head.Addr == 0) continue;
@@ -229,33 +353,31 @@ namespace Visuals {
             }
 
             if (validPoints < 3 || minX == 999999.0f) {
+                // Target is behind the camera (or failed to project) — draw an
+                // edge arrow pointing at them instead of skipping silently.
                 if (Vars::ESP::offscreen && head.Addr != 0) {
-                    RBX::Vec3 targetPos = head.GetPos();
-                    float centerX = screenW / 2.0f;
-                    float centerY = screenH / 2.0f;
-                    float X = (targetPos.X * viewMatrix.data[0]) + (targetPos.Y * viewMatrix.data[1]) + (targetPos.Z * viewMatrix.data[2]) + viewMatrix.data[3];
-                    float Y = (targetPos.X * viewMatrix.data[4]) + (targetPos.Y * viewMatrix.data[5]) + (targetPos.Z * viewMatrix.data[6]) + viewMatrix.data[7];
-                    float W = (targetPos.X * viewMatrix.data[12]) + (targetPos.Y * viewMatrix.data[13]) + (targetPos.Z * viewMatrix.data[14]) + viewMatrix.data[15];
-                    if (W < 0.1f) {
-                        float angle = atan2f(-Y, X);
-                        float radius = 150.0f;
-                        float indX = centerX + cosf(angle) * radius;
-                        float indY = centerY + sinf(angle) * radius;
-                        float size = 12.0f;
-                        ImVec2 p1 = ImVec2(indX + cosf(angle) * size, indY + sinf(angle) * size);
-                        ImVec2 p2 = ImVec2(indX + cosf(angle + 2.5f) * size, indY + sinf(angle + 2.5f) * size);
-                        ImVec2 p3 = ImVec2(indX + cosf(angle - 2.5f) * size, indY + sinf(angle - 2.5f) * size);
-                        drawList->AddTriangleFilled(p1, p2, p3, IM_COL32(255, 50, 50, 255));
-                    }
+                    DrawOffscreenArrow(drawList, headPos, viewMatrix, screenW, screenH);
                 }
                 continue;
             }
 
-            float boxWidth = maxX - minX;
-            float boxHeight = maxY - minY;
+            // Fully off-screen but in front of the camera — edge arrow, no box.
+            if (maxX < 0.0f || minX > screenW || maxY < 0.0f || minY > screenH) {
+                if (Vars::ESP::offscreen && head.Addr != 0) {
+                    DrawOffscreenArrow(drawList, headPos, viewMatrix, screenW, screenH);
+                }
+                continue;
+            }
 
-            ImVec2 screenSize = ImGui::GetIO().DisplaySize;
-            if (boxWidth > screenSize.x * 1.5f || boxHeight > screenSize.y * 1.5f) continue;
+            // Clamp oversized boxes (point-blank range) so ESP stays visible
+            // instead of disappearing entirely.
+            if (minX < 0.0f) minX = 0.0f;
+            if (minY < 0.0f) minY = 0.0f;
+            if (maxX > screenW) maxX = screenW;
+            if (maxY > screenH) maxY = screenH;
+            if (minX >= maxX || minY >= maxY) continue;
+
+            float boxHeight = maxY - minY;
 
             // ── Filled Box ───────────────────────────────────────────────────
             if (Vars::ESP::filledBox) {
@@ -340,7 +462,7 @@ namespace Visuals {
                     Draw3DBox(drawList, corners, viewMatrix, col, 1.2f);
                     };
 
-                ImU32 col3D = IM_COL32(120, 220, 255, 220);
+                ImU32 col3D = boxCol; // Respect the configured box color instead of hardcoded cyan
                 if (isR6) {
                     BuildAndDraw3D(torso, 2.0f, 2.0f, 1.0f, col3D);
                     BuildAndDraw3D(head, 1.0f, 1.0f, 1.0f, col3D);
@@ -350,16 +472,16 @@ namespace Visuals {
                     BuildAndDraw3D(leftLeg, 1.0f, 2.0f, 1.0f, col3D);
                 }
                 else {
-                    auto upperTorso = character.FindCharacterPart("UpperTorso");
-                    auto lowerTorso = character.FindCharacterPart("LowerTorso");
-                    auto leftUArm = character.FindCharacterPart("LeftUpperArm");
-                    auto rightUArm = character.FindCharacterPart("RightUpperArm");
-                    auto leftLArm = character.FindCharacterPart("LeftLowerArm");
-                    auto rightLArm = character.FindCharacterPart("RightLowerArm");
-                    auto leftULeg = character.FindCharacterPart("LeftUpperLeg");
-                    auto rightULeg = character.FindCharacterPart("RightUpperLeg");
-                    auto leftLLeg = character.FindCharacterPart("LeftLowerLeg");
-                    auto rightLLeg = character.FindCharacterPart("RightLowerLeg");
+                    auto upperTorso = pc.FindPart("UpperTorso");
+                    auto lowerTorso = pc.FindPart("LowerTorso");
+                    auto leftUArm = pc.FindPart("LeftUpperArm");
+                    auto rightUArm = pc.FindPart("RightUpperArm");
+                    auto leftLArm = pc.FindPart("LeftLowerArm");
+                    auto rightLArm = pc.FindPart("RightLowerArm");
+                    auto leftULeg = pc.FindPart("LeftUpperLeg");
+                    auto rightULeg = pc.FindPart("RightUpperLeg");
+                    auto leftLLeg = pc.FindPart("LeftLowerLeg");
+                    auto rightLLeg = pc.FindPart("RightLowerLeg");
 
                     BuildAndDraw3D(head, 1.0f, 1.0f, 1.0f, col3D);
                     BuildAndDraw3D(upperTorso, 1.6f, 1.5f, 0.8f, col3D);
@@ -415,20 +537,20 @@ namespace Visuals {
                     DrawDot(leftLeg, 2.0f);
                 }
                 else {
-                    auto upperTorso = character.FindCharacterPart("UpperTorso");
-                    auto lowerTorso = character.FindCharacterPart("LowerTorso");
-                    auto leftUArm = character.FindCharacterPart("LeftUpperArm");
-                    auto rightUArm = character.FindCharacterPart("RightUpperArm");
-                    auto leftLArm = character.FindCharacterPart("LeftLowerArm");
-                    auto rightLArm = character.FindCharacterPart("RightLowerArm");
-                    auto leftULeg = character.FindCharacterPart("LeftUpperLeg");
-                    auto rightULeg = character.FindCharacterPart("RightUpperLeg");
-                    auto leftLLeg = character.FindCharacterPart("LeftLowerLeg");
-                    auto rightLLeg = character.FindCharacterPart("RightLowerLeg");
-                    auto leftHand = character.FindCharacterPart("LeftHand");
-                    auto rightHand = character.FindCharacterPart("RightHand");
-                    auto leftFoot = character.FindCharacterPart("LeftFoot");
-                    auto rightFoot = character.FindCharacterPart("RightFoot");
+                    auto upperTorso = pc.FindPart("UpperTorso");
+                    auto lowerTorso = pc.FindPart("LowerTorso");
+                    auto leftUArm = pc.FindPart("LeftUpperArm");
+                    auto rightUArm = pc.FindPart("RightUpperArm");
+                    auto leftLArm = pc.FindPart("LeftLowerArm");
+                    auto rightLArm = pc.FindPart("RightLowerArm");
+                    auto leftULeg = pc.FindPart("LeftUpperLeg");
+                    auto rightULeg = pc.FindPart("RightUpperLeg");
+                    auto leftLLeg = pc.FindPart("LeftLowerLeg");
+                    auto rightLLeg = pc.FindPart("RightLowerLeg");
+                    auto leftHand = pc.FindPart("LeftHand");
+                    auto rightHand = pc.FindPart("RightHand");
+                    auto leftFoot = pc.FindPart("LeftFoot");
+                    auto rightFoot = pc.FindPart("RightFoot");
 
                     if (upperTorso.Addr == 0) upperTorso = torso;
 
@@ -466,8 +588,10 @@ namespace Visuals {
                 if (hp > 1.0f) hp = 1.0f;
                 ImU32 healthColor = IM_COL32((int)(255 * (1 - hp)), (int)(255 * hp), 0, 255);
                 float barH = (maxY - minY) * hp;
-                drawList->AddRectFilled(ImVec2(minX - 6, minY), ImVec2(minX - 2, maxY), IM_COL32(0, 0, 0, 200));
-                drawList->AddRectFilled(ImVec2(minX - 5, maxY - barH), ImVec2(minX - 3, maxY), healthColor);
+                float hbX = minX - 6.0f;
+                if (hbX < 1.0f) hbX = minX + 2.0f; // Keep the bar on-screen when the box is clamped to the edge
+                drawList->AddRectFilled(ImVec2(hbX, minY), ImVec2(hbX + 4, maxY), IM_COL32(0, 0, 0, 200));
+                drawList->AddRectFilled(ImVec2(hbX + 1, maxY - barH), ImVec2(hbX + 3, maxY), healthColor);
             }
 
             // ── Health Text ──────────────────────────────────────────────────
@@ -529,7 +653,7 @@ namespace Visuals {
 
             // ── Head Dot ───────────────────────────────────────────────────────
             if (Vars::ESP::headDot && head.Addr != 0) {
-                RBX::Vec2 headScreen = W2S::WorldToScreen(head.GetPos(), viewMatrix);
+                RBX::Vec2 headScreen = W2S::WorldToScreen(headPos, viewMatrix);
                 if (IsValidScreen(headScreen)) {
                     auto& hdc = Vars::ESP::headDotColor;
                     ImU32 hdCol = IM_COL32((int)(hdc[0] * 255), (int)(hdc[1] * 255), (int)(hdc[2] * 255), (int)(hdc[3] * 255));
@@ -540,7 +664,6 @@ namespace Visuals {
 
             // ── View Angle ─────────────────────────────────────────────────────
             if (Vars::ESP::viewAngle && head.Addr != 0) {
-                RBX::Vec3 headPos = head.GetPos();
                 RBX::Vec3 lookVec = head.GetRotation().GetLookVector();
                 RBX::Vec3 endPos = { headPos.X - lookVec.X * 5.0f, headPos.Y - lookVec.Y * 5.0f, headPos.Z - lookVec.Z * 5.0f };
 
