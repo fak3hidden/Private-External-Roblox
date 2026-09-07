@@ -12,6 +12,7 @@ namespace PlayerCache {
         uintptr_t characterAddr = 0;
         uintptr_t humanoidAddr  = 0;
         uintptr_t rootPartAddr  = 0;
+        uintptr_t headAddr      = 0;
 
         std::string name;
         std::string displayName;
@@ -93,6 +94,7 @@ namespace PlayerCache {
             if (rootPart.Addr == 0) continue;
 
             entry.rootPartAddr = rootPart.Addr;
+            entry.headAddr = character.FindCharacterPart("Head").Addr;
             entry.position = rootPart.GetPos();
 
             if (humanoid.Addr != 0) {
@@ -167,6 +169,7 @@ namespace PlayerCache {
                 CachedPlayer& entry = players[idx];
                 entry.characterAddr = character.Addr;
                 entry.rootPartAddr = rootPart.Addr;
+                entry.headAddr = character.FindCharacterPart("Head").Addr;
                 entry.position = rootPart.GetPos();
                 entry.distance = dist;
 

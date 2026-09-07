@@ -1,6 +1,7 @@
 #include "Memory/Communication.h"
 #include "Game/Offsets/Offsets.h"
 #include "Game/SDK/SDK.h"
+#include "Game/W2S/W2S.h"
 #include "Render/Render.h"
 #include "Core/Globals/Globals.h"
 #include "Core/Cache/Cache.h"
@@ -310,11 +311,20 @@ int main() {
         // Watermark (+ ESP debug readout)
         bool vmOk = (viewMatrix.data[0] != 0.0f || viewMatrix.data[5] != 0.0f ||
                      viewMatrix.data[10] != 0.0f || viewMatrix.data[15] != 0.0f);
+        int dbgHeads = 0, dbgProj = 0;
+        for (auto& dp : PlayerCache::players) {
+            if (!dp.isValid) continue;
+            if (dp.headAddr != 0) dbgHeads++;
+            RBX::Vec2 ds = W2S::WorldToScreen(dp.position, viewMatrix);
+            if (!(ds.X == 0.0f && ds.Y == 0.0f)) dbgProj++;
+        }
         std::string watermark = "Nowhere External | FPS: " + std::to_string(fps) +
             " | Players: " + std::to_string(static_cast<int>(PlayerCache::players.size())) +
             "/" + std::to_string(PlayerCache::debugRawCount) +
             " | VM: " + (vmOk ? "ok" : "BAD") +
-            " | LP: " + (Globals::localPlayer.Addr != 0 ? "ok" : "none");
+            " | LP: " + (Globals::localPlayer.Addr != 0 ? "ok" : "none") +
+            " | Heads: " + std::to_string(dbgHeads) +
+            " | Proj: " + std::to_string(dbgProj);
         ImVec2 textSize = ImGui::CalcTextSize(watermark.c_str());
         ImVec2 watermarkPos = ImVec2(ImGui::GetIO().DisplaySize.x - textSize.x - 10, 10);
 
