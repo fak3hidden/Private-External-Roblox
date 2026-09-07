@@ -304,8 +304,16 @@ int main() {
 
         ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 
-        // Watermark
-        std::string watermark = "Nowhere External | FPS: " + std::to_string(fps);
+        // Engine / Matrix (fetched early so the debug watermark can sanity-check it)
+        auto viewMatrix = Globals::renderEngine.GetViewMat();
+
+        // Watermark (+ ESP debug readout)
+        bool vmOk = (viewMatrix.data[0] != 0.0f || viewMatrix.data[5] != 0.0f ||
+                     viewMatrix.data[10] != 0.0f || viewMatrix.data[15] != 0.0f);
+        std::string watermark = "Nowhere External | FPS: " + std::to_string(fps) +
+            " | Players: " + std::to_string(static_cast<int>(PlayerCache::players.size())) +
+            " | VM: " + (vmOk ? "ok" : "BAD") +
+            " | LP: " + (Globals::localPlayer.Addr != 0 ? "ok" : "none");
         ImVec2 textSize = ImGui::CalcTextSize(watermark.c_str());
         ImVec2 watermarkPos = ImVec2(ImGui::GetIO().DisplaySize.x - textSize.x - 10, 10);
 
@@ -360,8 +368,6 @@ int main() {
             }
         }
 
-        // Engine / Matrix
-        auto viewMatrix = Globals::renderEngine.GetViewMat();
 
         // Feature Execution
         Flight::RunFlight();
