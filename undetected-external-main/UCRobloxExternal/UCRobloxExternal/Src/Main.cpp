@@ -23,6 +23,7 @@
 #include <random>
 #include <fstream>
 #include <string>
+#include <iomanip>
 
 std::atomic<bool> running(true);
 std::atomic<bool> gameAttached(false);
@@ -270,6 +271,49 @@ int main() {
 
         // Input
         if (GetAsyncKeyState(VK_INSERT) & 1) Vars::menuOpen = !Vars::menuOpen;
+
+        // F8: console debug dump (names / children / character resolution)
+        if (GetAsyncKeyState(VK_F8) & 1) {
+            std::cout << "\n===== DEBUG DUMP =====\n";
+            std::cout << "PlayersSvc: 0x" << std::hex << Globals::players.Addr << std::dec
+                      << " children=" << Globals::players.GetChildList().size() << "\n";
+            std::cout << "LocalPlayer: 0x" << std::hex << Globals::localPlayer.Addr << std::dec
+                      << " name='" << Globals::localPlayer.GetName()
+                      << "' class='" << Globals::localPlayer.GetClass() << "'\n";
+            uintptr_t lnp = Coms->ReadMemory<uintptr_t>(Globals::localPlayer.Addr + Offsets::Instance::Name);
+            std::cout << "LocalPlayer namePtr=0x" << std::hex << lnp << std::dec << "\n";
+            if (lnp != 0) {
+                char nbuf[48] = {};
+                Coms->ReadBuffer(lnp, nbuf, sizeof(nbuf));
+                std::cout << " name bytes: ";
+                for (int i = 0; i < 48; ++i)
+                    std::cout << std::hex << std::setfill('0') << std::setw(2) << (int)(unsigned char)nbuf[i] << " ";
+                std::cout << std::dec << "\n";
+                std::cout << " len@+0x18=" << Coms->ReadMemory<int32_t>(lnp + 0x18) << "\n";
+            }
+            auto lc = Globals::localPlayer.GetModelRef();
+            std::cout << "LocalChar: 0x" << std::hex << lc.Addr << std::dec
+                      << " class='" << lc.GetClass() << "'\n";
+            if (lc.IsValid()) {
+                auto kids = lc.GetChildList();
+                std::cout << "LocalChar children=" << kids.size() << "\n";
+                int shown = 0;
+                for (auto& k : kids) {
+                    if (shown++ >= 25) break;
+                    std::cout << "  0x" << std::hex << k.Addr << std::dec
+                              << " name='" << k.GetName() << "' class='" << k.GetClass() << "'\n";
+                }
+            }
+            std::cout << "localPos=(" << PlayerCache::localPlayerPos.X << "," << PlayerCache::localPlayerPos.Y << "," << PlayerCache::localPlayerPos.Z << ")\n";
+            int cshown = 0;
+            for (auto& p : PlayerCache::players) {
+                if (cshown++ >= 3) break;
+                std::cout << "Cached: player=0x" << std::hex << p.playerAddr << " char=0x" << p.characterAddr
+                          << " head=0x" << p.headAddr << " root=0x" << p.rootPartAddr << std::dec
+                          << " name='" << p.name << "' pos=(" << p.position.X << "," << p.position.Y << "," << p.position.Z << ")\n";
+            }
+            std::cout << "======================\n";
+        }
 
         // Teleportation/Rescan Handler
         if (Vars::Misc::rescan) {
