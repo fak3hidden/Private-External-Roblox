@@ -3,7 +3,6 @@
 #include <vector>
 #include <memory>
 #include <windows.h>
-#include "DriverProvider.h" // after interface so providers can register below
 
 struct InjectResult {
     bool ok = false;
@@ -37,6 +36,11 @@ public:
         return r;
     }
 };
+
+// Provider implementations live in their own headers, included AFTER the
+// interface above (never at the top — that breaks the build with
+// "'IInjectionProvider': base class undefined").
+#include "DriverProvider.h"
 
 inline std::vector<std::shared_ptr<IInjectionProvider>> GetProviders() {
     // Register real providers here, e.g.: providers.push_back(std::make_shared<MyDriverProvider>());
