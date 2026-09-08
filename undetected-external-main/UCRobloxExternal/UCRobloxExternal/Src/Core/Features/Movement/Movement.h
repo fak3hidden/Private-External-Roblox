@@ -3,6 +3,7 @@
 #include "../../Vars/Vars.h"
 #include "../../Globals/Globals.h"
 #include <windows.h>
+#include <cmath>
 #include <vector>
 #include <utility>
 
@@ -46,6 +47,54 @@ namespace Movement {
             Coms->WriteMemory<bool>(humanoid.Addr + Offsets::Humanoid::Jump, true);
         }
         wasSpaceDown = isSpaceDown;
+    }
+
+    // Velocity-based WalkSpeed: never touches the WalkSpeed property (which is what
+    // anti-cheats check), so it can't trip value/mismatch kicks. WalkSpeed is restored
+    // to 16 exactly once on toggle transitions to heal any residue from older builds.
+    inline void RunSpeed() {
+        auto restoreWalkSpeed = []() {
+            auto ch = Globals::localPlayer.GetModelRef();
+            if (ch.Addr == 0) return;
+            auto hum = ch.FindChildByClass("Humanoid");
+            if (hum.Addr != 0)
+                Coms->WriteMemory<float>(hum.Addr + Offsets::Humanoid::Walkspeed, 16.0f);
+        };
+
+        static bool prevEnabled = false;
+        if (!Vars::Local::speedEnabled) {
+            if (prevEnabled) { restoreWalkSpeed(); prevEnabled = false; }
+            return;
+        }
+        if (!prevEnabled) { restoreWalkSpeed(); prevEnabled = true; }
+
+        float target = Vars::Local::walkSpeed;
+        if (target < 1.0f) return;
+
+        auto character = Globals::localPlayer.GetModelRef();
+        if (character.Addr == 0) return;
+
+        auto humanoid = character.FindChildByClass("Humanoid");
+        if (humanoid.Addr == 0) return;
+
+        // Don't fight fly (PlatformStand drives velocity itself).
+        if (Coms->ReadMemory<bool>(humanoid.Addr + Offsets::Humanoid::PlatformStand)) return;
+
+        auto hrp = character.FindCharacterPart("HumanoidRootPart");
+        if (hrp.Addr == 0) return;
+
+        uintptr_t prim = hrp.GetPrimitivePtr();
+        if (prim == 0) return;
+
+        RBX::Vec3 vel = Coms->ReadMemory<RBX::Vec3>(prim + Offsets::Primitive::AssemblyLinearVelocity);
+        float hs = sqrtf(vel.X * vel.X + vel.Z * vel.Z);
+        // Only boost real movement: never inject while idle, never clamp momentum/vehicles.
+        if (hs < 1.0f || hs >= target) return;
+
+        float s = target / hs;
+        vel.X *= s;
+        vel.Z *= s;
+        Coms->WriteMemory<RBX::Vec3>(prim + Offsets::Primitive::AssemblyLinearVelocity, vel);
     }
 
     inline void RunNoclip() {

@@ -171,7 +171,6 @@ bool RescanPointers(uintptr_t baseAddr) {
 
 // --- Threads ---
 void LocalPlayerThread() {
-    static bool prevSpeedEnabled = false;
     static bool prevJumpEnabled = false;
     static std::mt19937 rng(std::random_device{}());
     static std::uniform_int_distribution<int> jitter(-50, 50);
@@ -190,15 +189,7 @@ void LocalPlayerThread() {
 
         auto humanoid = character.FindChildByClass("Humanoid");
         if (humanoid.Addr != 0) {
-            if (Vars::Local::speedEnabled) {
-                RBX::ModifyWalkspeed(humanoid, Vars::Local::walkSpeed);
-                prevSpeedEnabled = true;
-            }
-            else if (prevSpeedEnabled) {
-                RBX::ModifyWalkspeed(humanoid, 16.0f);
-                prevSpeedEnabled = false;
-            }
-
+            // NOTE: WalkSpeed is handled by Movement::RunSpeed() (velocity-based, anti-kick).
             if (Vars::Local::jumpEnabled) {
                 RBX::ModifyJumpPower(humanoid, Vars::Local::jumpPower);
                 prevJumpEnabled = true;
@@ -515,6 +506,7 @@ int main() {
         // Feature Execution
         Flight::RunFlight();
         Movement::RunInfiniteJump();
+        Movement::RunSpeed();
         Movement::RunNoclip();
         Movement::RunDesync();
         Aimbot::RunAimbot(viewMatrix);
