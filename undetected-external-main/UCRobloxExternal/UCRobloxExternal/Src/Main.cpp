@@ -192,6 +192,88 @@ bool RescanPointers(uintptr_t baseAddr) {
             }
         }
 
+        // --- Auto-detect BasePart::Transparency (0x130 vs 0xd0 across dumps) ---
+        // Oracle: the local Head is (almost) always fully visible, exactly 0.0.
+        {
+            uintptr_t bestT = 0x130;
+            auto tch = Globals::localPlayer.GetModelRef();
+            if (tch.Addr != 0) {
+                auto thead = tch.FindCharacterPart("Head");
+                if (thead.Addr != 0) {
+                    float tNew = Coms->ReadMemory<float>(thead.Addr + 0x130);
+                    float tOld = Coms->ReadMemory<float>(thead.Addr + 0xd0);
+                    bool newSane = (tNew >= 0.0f && tNew <= 1.0f);
+                    bool oldSane = (tOld >= 0.0f && tOld <= 1.0f);
+                    if (oldSane && !newSane) bestT = 0xd0;
+                }
+            }
+            Offsets::BasePart::Transparency = bestT;
+            std::cout << "[+] BasePart::Transparency resolved: 0x" << std::hex << bestT << std::dec << "\n";
+        }
+
+        // --- Validate Lighting offsets (ours +8 vs reference across dumps) ---
+        // Oracle: lighting values stay in sane physical ranges; the layout with
+        // decisively more sane fields wins. Reference layout is exactly -0x8.
+        {
+            auto lighting = Globals::dataModel.FindChildByClass("Lighting");
+            int oursSane = 0, refSane = 0;
+            if (lighting.Addr != 0) {
+                auto sane1 = [](float v, float lo, float hi) { return v >= lo && v <= hi; };
+                auto saneVec = [&](uintptr_t off) {
+                    RBX::Vec3 v = Coms->ReadMemory<RBX::Vec3>(lighting.Addr + off);
+                    return sane1(v.X, 0.0f, 1.0f) && sane1(v.Y, 0.0f, 1.0f) && sane1(v.Z, 0.0f, 1.0f);
+                };
+                if (saneVec(Offsets::Lighting::Ambient)) oursSane++;
+                if (saneVec(Offsets::Lighting::OutdoorAmbient)) oursSane++;
+                if (saneVec(Offsets::Lighting::FogColor)) oursSane++;
+                if (sane1(Coms->ReadMemory<float>(lighting.Addr + Offsets::Lighting::Brightness), 0.0f, 100.0f)) oursSane++;
+                if (sane1(Coms->ReadMemory<float>(lighting.Addr + Offsets::Lighting::ExposureCompensation), -10.0f, 10.0f)) oursSane++;
+                if (sane1(Coms->ReadMemory<float>(lighting.Addr + Offsets::Lighting::FogEnd), 0.0f, 2.0e9f)) oursSane++;
+                if (saneVec(0xc8)) refSane++;
+                if (saneVec(0xf8)) refSane++;
+                if (saneVec(0xec)) refSane++;
+                if (sane1(Coms->ReadMemory<float>(lighting.Addr + 0x110), 0.0f, 100.0f)) refSane++;
+                if (sane1(Coms->ReadMemory<float>(lighting.Addr + 0x11c), -10.0f, 10.0f)) refSane++;
+                if (sane1(Coms->ReadMemory<float>(lighting.Addr + 0x124), 0.0f, 2.0e9f)) refSane++;
+            }
+            if (refSane >= 4 && refSane - oursSane >= 3) {
+                Offsets::Lighting::Ambient = 0xc8;
+                Offsets::Lighting::OutdoorAmbient = 0xf8;
+                Offsets::Lighting::FogColor = 0xec;
+                Offsets::Lighting::Brightness = 0x110;
+                Offsets::Lighting::ExposureCompensation = 0x11c;
+                Offsets::Lighting::FogEnd = 0x124;
+                std::cout << "[+] Lighting offsets switched to reference layout (" << refSane << "/6 sane)\n";
+            } else {
+                std::cout << "[*] Lighting offsets kept (sane " << oursSane << "/6 vs ref " << refSane << "/6)\n";
+            }
+        }
+
+        // --- Validate VisualEngine::RenderView (0xc30 vs 0xbb8 across dumps) ---
+        // Oracle: the RenderView pointer must be canonical and its valid-flags 0/1.
+        {
+            Offsets::VisualEngine::RenderViewOk = false;
+            if (Globals::renderEngine.Addr != 0) {
+                const uintptr_t rcands[] = { 0xc30, 0xbb8 };
+                for (uintptr_t rc : rcands) {
+                    uintptr_t rv = Coms->ReadMemory<uintptr_t>(Globals::renderEngine.Addr + rc);
+                    if (rv >= 0x10000 && rv < 0x800000000000) {
+                        BYTE b1 = Coms->ReadMemory<BYTE>(rv + Offsets::RenderView::LightingValid);
+                        BYTE b2 = Coms->ReadMemory<BYTE>(rv + Offsets::RenderView::SkyValid);
+                        if (b1 <= 1 && b2 <= 1) {
+                            Offsets::VisualEngine::RenderView = rc;
+                            Offsets::VisualEngine::RenderViewOk = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (Offsets::VisualEngine::RenderViewOk)
+                std::cout << "[+] VisualEngine::RenderView resolved: 0x" << std::hex << Offsets::VisualEngine::RenderView << std::dec << "\n";
+            else
+                std::cout << "[!] VisualEngine::RenderView unresolved, World invalidate disabled\n";
+        }
+
         return (Globals::dataModel.Addr != 0 && Globals::workspace.Addr != 0);
     }
     catch (...) {

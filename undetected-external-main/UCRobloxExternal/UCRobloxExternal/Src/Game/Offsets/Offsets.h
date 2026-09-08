@@ -58,7 +58,7 @@ namespace Offsets {
         inline constexpr uintptr_t Primitive = 0x188;
         inline constexpr uintptr_t Reflectance = 0x10c;
         inline constexpr uintptr_t Shape = 0x1b8;
-        inline constexpr uintptr_t Transparency = 0x130;
+        inline uintptr_t Transparency = 0x130; // Auto-resolved in RescanPointers (0x130 vs 0xd0)
     }
 
     namespace Beam {
@@ -256,16 +256,16 @@ namespace Offsets {
     }
 
     namespace Lighting {
-        inline constexpr uintptr_t Ambient = 0xd0;
-        inline constexpr uintptr_t Brightness = 0x118;
+        inline uintptr_t Ambient = 0xd0; // Validated in RescanPointers (vs ref 0xc8)
+        inline uintptr_t Brightness = 0x118; // Validated in RescanPointers (vs ref 0x110)
         inline constexpr uintptr_t ClockTime = 0xc8;
         inline constexpr uintptr_t ColorShift_Bottom = 0xe8;
         inline constexpr uintptr_t ColorShift_Top = 0xdc;
         inline constexpr uintptr_t EnvironmentDiffuseScale = 0x11c;
         inline constexpr uintptr_t EnvironmentSpecularScale = 0x120;
-        inline constexpr uintptr_t ExposureCompensation = 0x124;
-        inline constexpr uintptr_t FogColor = 0xf4;
-        inline constexpr uintptr_t FogEnd = 0x12c;
+        inline uintptr_t ExposureCompensation = 0x124; // Validated in RescanPointers (vs ref 0x11c)
+        inline uintptr_t FogColor = 0xf4; // Validated in RescanPointers (vs ref 0xec)
+        inline uintptr_t FogEnd = 0x12c; // Validated in RescanPointers (vs ref 0x124)
         inline constexpr uintptr_t FogStart = 0x130;
         inline constexpr uintptr_t GeographicLatitude = 0x134;
         inline constexpr uintptr_t GlobalShadows = 0x144;
@@ -274,7 +274,7 @@ namespace Offsets {
         inline constexpr uintptr_t LightColor = 0x15c;
         inline constexpr uintptr_t LightDirection = 0x168;
         inline constexpr uintptr_t MoonPosition = 0x184;
-        inline constexpr uintptr_t OutdoorAmbient = 0x100;
+        inline uintptr_t OutdoorAmbient = 0x100; // Validated in RescanPointers (vs ref 0xf8)
         inline constexpr uintptr_t Sky = 0x1c8;
         inline constexpr uintptr_t Source = 0x174;
         inline constexpr uintptr_t SunPosition = 0x178;
@@ -580,7 +580,8 @@ namespace Offsets {
         inline constexpr uintptr_t Dimensions = 0xb10;
         inline constexpr uintptr_t FakeDataModel = 0xaf0;
         inline constexpr uintptr_t Pointer = 0x8351408;
-        inline constexpr uintptr_t RenderView = 0xc30;
+        inline uintptr_t RenderView = 0xc30; // Validated in RescanPointers (vs ref 0xbb8)
+        inline bool RenderViewOk = false; // Set by validation; gates World invalidate writes
         inline constexpr uintptr_t ViewMatrix = 0x1b0;
     }
 

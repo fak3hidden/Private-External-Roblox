@@ -147,7 +147,7 @@ namespace World {
                 needsInvalidate = true;
             }
             
-            if (needsInvalidate && Globals::renderEngine.Addr != 0) {
+            if (needsInvalidate && Globals::renderEngine.Addr != 0 && Offsets::VisualEngine::RenderViewOk) {
                 uintptr_t renderView = Coms->ReadMemory<uintptr_t>(Globals::renderEngine.Addr + Offsets::VisualEngine::RenderView);
                 if (renderView != 0) {
                     Coms->WriteMemory<uint8_t>(renderView + Offsets::RenderView::LightingValid, 0);
