@@ -4,6 +4,7 @@
 #include "../../Globals/Globals.h"
 #include <windows.h>
 #include <cmath>
+#include <iostream>
 #include <vector>
 #include <utility>
 
@@ -49,52 +50,52 @@ namespace Movement {
         wasSpaceDown = isSpaceDown;
     }
 
-    // Velocity-based WalkSpeed: never touches the WalkSpeed property (which is what
-    // anti-cheats check), so it can't trip value/mismatch kicks. WalkSpeed is restored
-    // to 16 exactly once on toggle transitions to heal any residue from older builds.
+    // Shadow-field WalkSpeed bypass: the script-visible WalkSpeed property (0x1D0,
+    // what Lua anti-cheats and the server read) is pinned at 16, while the internal
+    // WalkspeedCheck field (0x3BC, what the controller actually moves you with)
+    // carries the target speed. Guarded so a wrong offset can never corrupt memory.
     inline void RunSpeed() {
-        auto restoreWalkSpeed = []() {
+        static bool prevEnabled = false;
+        static bool checkLogged = false;
+
+        auto restoreAll = []() {
             auto ch = Globals::localPlayer.GetModelRef();
             if (ch.Addr == 0) return;
             auto hum = ch.FindChildByClass("Humanoid");
-            if (hum.Addr != 0)
-                Coms->WriteMemory<float>(hum.Addr + Offsets::Humanoid::Walkspeed, 16.0f);
+            if (hum.Addr == 0) return;
+            Coms->WriteMemory<float>(hum.Addr + Offsets::Humanoid::Walkspeed, 16.0f);
+            float chk = Coms->ReadMemory<float>(hum.Addr + Offsets::Humanoid::WalkspeedCheck);
+            if (chk >= 0.0f && chk <= 500.0f)
+                Coms->WriteMemory<float>(hum.Addr + Offsets::Humanoid::WalkspeedCheck, 16.0f);
         };
 
-        static bool prevEnabled = false;
         if (!Vars::Local::speedEnabled) {
-            if (prevEnabled) { restoreWalkSpeed(); prevEnabled = false; }
+            if (prevEnabled) { restoreAll(); prevEnabled = false; checkLogged = false; }
             return;
         }
-        if (!prevEnabled) { restoreWalkSpeed(); prevEnabled = true; }
+        if (!prevEnabled) { restoreAll(); prevEnabled = true; }
 
         float target = Vars::Local::walkSpeed;
-        if (target < 1.0f) return;
+        if (target < 0.0f) target = 0.0f;
+        if (target > 300.0f) target = 300.0f;
 
         auto character = Globals::localPlayer.GetModelRef();
         if (character.Addr == 0) return;
-
         auto humanoid = character.FindChildByClass("Humanoid");
         if (humanoid.Addr == 0) return;
 
-        // Don't fight fly (PlatformStand drives velocity itself).
-        if (Coms->ReadMemory<bool>(humanoid.Addr + Offsets::Humanoid::PlatformStand)) return;
+        // Safety: only touch WalkspeedCheck if it reads as a sane speed-like float.
+        float chk = Coms->ReadMemory<float>(humanoid.Addr + Offsets::Humanoid::WalkspeedCheck);
+        if (!checkLogged) {
+            std::cout << "[Speed] WalkspeedCheck reads " << chk << "\n";
+            checkLogged = true;
+        }
+        if (!(chk >= 0.0f && chk <= 500.0f)) return;
 
-        auto hrp = character.FindCharacterPart("HumanoidRootPart");
-        if (hrp.Addr == 0) return;
-
-        uintptr_t prim = hrp.GetPrimitivePtr();
-        if (prim == 0) return;
-
-        RBX::Vec3 vel = Coms->ReadMemory<RBX::Vec3>(prim + Offsets::Primitive::AssemblyLinearVelocity);
-        float hs = sqrtf(vel.X * vel.X + vel.Z * vel.Z);
-        // Only boost real movement: never inject while idle, never clamp momentum/vehicles.
-        if (hs < 1.0f || hs >= target) return;
-
-        float s = target / hs;
-        vel.X *= s;
-        vel.Z *= s;
-        Coms->WriteMemory<RBX::Vec3>(prim + Offsets::Primitive::AssemblyLinearVelocity, vel);
+        // Pin the script-visible property at 16 (what Lua/server checks read)...
+        Coms->WriteMemory<float>(humanoid.Addr + Offsets::Humanoid::Walkspeed, 16.0f);
+        // ...while the controller runs at target speed.
+        Coms->WriteMemory<float>(humanoid.Addr + Offsets::Humanoid::WalkspeedCheck, target);
     }
 
     inline void RunNoclip() {
