@@ -25,6 +25,8 @@
 #include <string>
 #include <iomanip>
 #include <cstdio>
+#include <vector>
+#include <utility>
 
 std::atomic<bool> running(true);
 std::atomic<bool> gameAttached(false);
@@ -33,6 +35,13 @@ std::atomic<bool> gameAttached(false);
 bool IsGameRunning(const wchar_t* windowTitle) {
     HWND hwnd = FindWindowW(NULL, windowTitle);
     return hwnd != NULL;
+}
+
+// --- Name-sweep diagnostics (rendered on screen so screenshots carry the data) ---
+namespace NameDiag {
+    inline bool resolved = false;
+    inline std::string status = "NameCfg: sweep pending...";
+    inline std::vector<std::string> lines;
 }
 
 bool RescanPointers(uintptr_t baseAddr) {
@@ -60,40 +69,156 @@ bool RescanPointers(uintptr_t baseAddr) {
             Globals::localPlayer = RBX::RbxInstance(locPlr);
         }
 
-        // --- Auto-detect Instance::Name offset (sweep 0x8-0x200) ---
-        // Known-good service names ("Game"/"Workspace"/"Players") vote for the right offset.
+        // --- Auto-detect Instance::Name (offset x shape sweep) ---
+        // Reader is proven (class names resolve); only the Instance-name path varies.
+        // Shapes: 0=deref *(C), 1=inline (C), 2=container *(C)+S, 3=dbl-deref *(*(C)+S).
         {
-            auto testNameOffset = [&](uintptr_t cand) -> int {
-                Offsets::Instance::Name = cand;
-                int votes = 0;
-                if (Globals::dataModel.GetName() == "Game") votes++;
-                if (Globals::workspace.GetName() == "Workspace") votes++;
-                if (Globals::players.GetName() == "Players") votes++;
-                return votes;
+            NameDiag::lines.clear();
+            NameDiag::resolved = false;
+
+            auto readNameAs = [&](uintptr_t inst, uintptr_t cand, int mode, uintptr_t sub) -> std::string {
+                if (inst == 0) return "";
+                if (mode == 1) return Coms->ReadGameString(inst + cand);
+                uintptr_t c = Coms->ReadMemory<uintptr_t>(inst + cand);
+                if (c == 0) return "";
+                if (mode == 2) return Coms->ReadGameString(c + sub);
+                if (mode == 3) {
+                    uintptr_t s = Coms->ReadMemory<uintptr_t>(c + sub);
+                    if (s == 0) return "";
+                    return Coms->ReadGameString(s);
+                }
+                return Coms->ReadGameString(c);
             };
-            uintptr_t foundName = 0;
-            int foundVotes = 0;
-            // Most likely candidates first, then exhaustive sweep of the Instance header.
-            const uintptr_t first[] = { 0x98, 0x70, 0x8 };
-            for (uintptr_t cand : first) {
-                int v = testNameOffset(cand);
-                if (v >= 2) { foundName = cand; foundVotes = v; break; }
+
+            auto votesServices = [&](uintptr_t cand, int mode, uintptr_t sub,
+                                     std::string& oDM, std::string& oWS, std::string& oPL) -> int {
+                oDM = readNameAs(Globals::dataModel.Addr, cand, mode, sub);
+                oWS = readNameAs(Globals::workspace.Addr, cand, mode, sub);
+                oPL = readNameAs(Globals::players.Addr, cand, mode, sub);
+                int v = 0;
+                if (oDM == "Game") v++;
+                if (oWS == "Workspace") v++;
+                if (oPL == "Players") v++;
+                return v;
+            };
+
+            const std::pair<int, uintptr_t> tests[] = {
+                {0,0},{1,0},
+                {2,0x8},{2,0x10},{2,0x18},{2,0x20},{2,0x28},
+                {3,0x0},{3,0x8},{3,0x10},{3,0x18},{3,0x20}
+            };
+            std::vector<uintptr_t> cands = { 0x98, 0x70, 0x8 };
+            for (uintptr_t c = 0x10; c <= 0x280; c += 8) {
+                if (c == 0x98 || c == 0x70) continue;
+                cands.push_back(c);
             }
-            if (!foundName) {
-                for (uintptr_t cand = 0x10; cand <= 0x200; cand += 8) {
-                    if (cand == 0x98 || cand == 0x70) continue;
-                    int v = testNameOffset(cand);
-                    if (v >= 2) { foundName = cand; foundVotes = v; break; }
+
+            uintptr_t winC = 0; int winM = 0; uintptr_t winS = 0; int winV = 0;
+            std::string why;
+
+            // Phase 1: service-name oracle (Game / Workspace / Players, need 2/3).
+            for (uintptr_t cand : cands) {
+                for (auto [mode, sub] : tests) {
+                    std::string sDM, sWS, sPL;
+                    int v = votesServices(cand, mode, sub, sDM, sWS, sPL);
+                    if (v >= 2) { winC = cand; winM = mode; winS = sub; winV = v; why = "services"; break; }
+                    bool prime = (cand == 0x8 || cand == 0x70 || cand == 0x98) && mode <= 1;
+                    if ((v == 1 || prime) && NameDiag::lines.size() < 40) {
+                        char lb[192];
+                        snprintf(lb, sizeof(lb), "0x%llX m%d s0x%llX v%d: '%s' | '%s' | '%s'",
+                            (unsigned long long)cand, mode, (unsigned long long)sub, v,
+                            sDM.c_str(), sWS.c_str(), sPL.c_str());
+                        NameDiag::lines.emplace_back(lb);
+                    }
+                }
+                if (winC) break;
+            }
+
+            // Phase 2: local-character part-name oracle (immune to service renames).
+            if (!winC) {
+                auto localChar = Globals::localPlayer.GetModelRef();
+                std::vector<uintptr_t> kidAddrs;
+                if (localChar.IsValid() && localChar.GetClass() == "Model") {
+                    for (auto& k : localChar.GetChildList()) {
+                        kidAddrs.push_back(k.Addr);
+                        if (kidAddrs.size() >= 14) break;
+                    }
+                }
+                if (!kidAddrs.empty()) {
+                    const char* known[] = {"Head","Torso","Humanoid","HumanoidRootPart","UpperTorso","LowerTorso",
+                        "Left Arm","Right Arm","Left Leg","Right Leg","LeftFoot","RightFoot","LeftHand","RightHand",
+                        "UpperLeftArm","UpperRightArm","LowerLeftArm","LowerRightArm","UpperLeftLeg","UpperRightLeg",
+                        "LowerLeftLeg","LowerRightLeg","LeftUpperArm","RightUpperArm","LeftLowerArm","RightLowerArm",
+                        "LeftUpperLeg","RightUpperLeg","LeftLowerLeg","RightLowerLeg"};
+                    int bestScore = 0;
+                    uintptr_t bestC = 0; int bestM = 0; uintptr_t bestS = 0;
+                    std::string bestKids;
+                    for (uintptr_t cand : cands) {
+                        for (auto [mode, sub] : tests) {
+                            int score = 0;
+                            std::string kidPreview;
+                            for (uintptr_t ka : kidAddrs) {
+                                std::string kn = readNameAs(ka, cand, mode, sub);
+                                for (auto* want : known) { if (kn == want) { score++; break; } }
+                                if (kidPreview.size() < 52) {
+                                    if (!kidPreview.empty()) kidPreview += ",";
+                                    kidPreview += kn.empty() ? "?" : kn;
+                                }
+                            }
+                            if (score > bestScore) { bestScore = score; bestC = cand; bestM = mode; bestS = sub; bestKids = kidPreview; }
+                            if (score >= 3) { winC = cand; winM = mode; winS = sub; winV = score; why = "character"; break; }
+                        }
+                        if (winC) break;
+                    }
+                    if (!winC) {
+                        char lb[192];
+                        snprintf(lb, sizeof(lb), "char-best: 0x%llX m%d s0x%llX score %d kids:[%s]",
+                            (unsigned long long)bestC, bestM, (unsigned long long)bestS, bestScore, bestKids.c_str());
+                        NameDiag::lines.emplace_back(lb);
+                    }
+                } else {
+                    NameDiag::lines.emplace_back("char-oracle skipped: no local character");
                 }
             }
-            if (foundName) {
-                Offsets::Instance::Name = foundName;
-                std::cout << "[+] Instance::Name auto-resolved: 0x" << std::hex << foundName << std::dec
-                          << " (" << foundVotes << "/3 votes)\n";
-                std::cout << "[+] LocalPlayer name: " << Globals::localPlayer.GetName() << "\n";
+
+            if (winC) {
+                Offsets::Instance::Name = winC;
+                Offsets::Instance::NameMode = winM;
+                Offsets::Instance::NameSub = winS;
+                NameDiag::resolved = true;
+                NameDiag::lines.clear();
+                std::cout << "[+] Instance::Name resolved: 0x" << std::hex << winC << std::dec
+                          << " mode " << winM << " sub 0x" << std::hex << winS << std::dec
+                          << " (" << why << " " << winV << ")\n";
             } else {
                 Offsets::Instance::Name = 0x8;
-                std::cout << "[!] Instance::Name sweep failed (0x8-0x200), keeping 0x8\n";
+                Offsets::Instance::NameMode = 0;
+                Offsets::Instance::NameSub = 0;
+                std::cout << "[!] Instance::Name sweep failed (0x8-0x280 x13 shapes, 2 oracles)\n";
+            }
+
+            // On-screen status line (proves the result in screenshots).
+            {
+                std::string lp = Globals::localPlayer.GetName();
+                std::string kids;
+                auto lc = Globals::localPlayer.GetModelRef();
+                if (lc.IsValid()) {
+                    int n = 0;
+                    for (auto& k : lc.GetChildList()) {
+                        if (n++ >= 6) break;
+                        if (!kids.empty()) kids += ",";
+                        std::string kn = k.GetName();
+                        kids += kn.empty() ? "?" : kn;
+                    }
+                }
+                char sb[224];
+                snprintf(sb, sizeof(sb), "NameCfg: %s off=0x%llX m%d s0x%llX via=%s | LP:'%s' kids:[%s]",
+                    NameDiag::resolved ? "OK" : "FAIL",
+                    (unsigned long long)Offsets::Instance::Name, Offsets::Instance::NameMode,
+                    (unsigned long long)Offsets::Instance::NameSub,
+                    NameDiag::resolved ? why.c_str() : "-",
+                    lp.c_str(), kids.c_str());
+                NameDiag::status = sb;
             }
         }
 
@@ -409,7 +534,8 @@ int main() {
             " | LP: " + (Globals::localPlayer.Addr != 0 ? "ok" : "none") +
             " | Heads: " + std::to_string(dbgHeads) +
             " | Proj: " + std::to_string(dbgProj) +
-            " | Name:0x" + nameOffHex;
+            " | Name:0x" + nameOffHex + "m" + std::to_string(Offsets::Instance::NameMode) +
+            (NameDiag::resolved ? "" : "?");
         ImVec2 textSize = ImGui::CalcTextSize(watermark.c_str());
         ImVec2 watermarkPos = ImVec2(ImGui::GetIO().DisplaySize.x - textSize.x - 10, 10);
 
@@ -418,6 +544,24 @@ int main() {
         drawList->AddText(ImVec2(watermarkPos.x, watermarkPos.y - 1), IM_COL32(0, 0, 0, 255), watermark.c_str());
         drawList->AddText(ImVec2(watermarkPos.x, watermarkPos.y + 1), IM_COL32(0, 0, 0, 255), watermark.c_str());
         drawList->AddText(watermarkPos, IM_COL32(255, 255, 255, 255), watermark.c_str());
+
+        // Name-sweep on-screen report (top-left; table only while unresolved)
+        {
+            float diagY = 10.0f;
+            auto diagText = [&](const std::string& s) {
+                drawList->AddText(ImVec2(11, diagY), IM_COL32(0, 0, 0, 255), s.c_str());
+                drawList->AddText(ImVec2(10, diagY), IM_COL32(255, 255, 130, 255), s.c_str());
+                diagY += 15.0f;
+            };
+            diagText(NameDiag::status);
+            if (!NameDiag::resolved) {
+                int shown = 0;
+                for (auto& ln : NameDiag::lines) {
+                    if (shown++ >= 30) break;
+                    diagText(ln);
+                }
+            }
+        }
 
         // FOV Circles
         POINT p;

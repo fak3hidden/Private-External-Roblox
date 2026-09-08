@@ -69,9 +69,17 @@ namespace RBX {
 
         std::string GetName() const {
             if (!IsValid()) return "";
-            uintptr_t namePtr = Coms->ReadMemory<uintptr_t>(Addr + Offsets::Instance::Name);
-            if (namePtr == 0) return "";
-            return Coms->ReadGameString(namePtr);
+            int mode = Offsets::Instance::NameMode;
+            if (mode == 1) return Coms->ReadGameString(Addr + Offsets::Instance::Name);
+            uintptr_t c = Coms->ReadMemory<uintptr_t>(Addr + Offsets::Instance::Name);
+            if (c == 0) return "";
+            if (mode == 2) return Coms->ReadGameString(c + Offsets::Instance::NameSub);
+            if (mode == 3) {
+                uintptr_t s = Coms->ReadMemory<uintptr_t>(c + Offsets::Instance::NameSub);
+                if (s == 0) return "";
+                return Coms->ReadGameString(s);
+            }
+            return Coms->ReadGameString(c);
         }
 
         std::string GetClass() const {
