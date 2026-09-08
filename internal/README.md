@@ -99,3 +99,11 @@ are real.
 2. Never commit a working bypass to this repo (or anywhere public).
 3. Every static address dies weekly — all RE must be pattern + runtime-validated.
 4. The external stays the daily driver until internal reaches parity + safety.
+
+## Phase 2a: driver skeleton (this commit)
+
+WDM driver source (`Driver/Src`, build via the Empty-WDM-driver wizard —
+see `Driver/README.md`), usermode `DriverClient`, and a `DriverProvider` wired
+into the injector. Stage 1 only: it proves kernel R/W against the live game
+(base + PE magic) and stops before any loader work. The manual-map + execution
+loader is the next stage once Stage 1 is green on your machine.

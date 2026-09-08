@@ -76,6 +76,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Src\Bypass\IBypass.h" />
+    <ClInclude Include="Src\Bypass\DriverProvider.h" />
+    <ClInclude Include="Src\Drv\DriverClient.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
