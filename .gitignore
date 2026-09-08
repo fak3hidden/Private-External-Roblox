@@ -1,0 +1,39 @@
+# Build outputs
+x64/
+x86/
+Debug/
+Release/
+[Bb]in/
+[Oo]bj/
+out/
+.vs/
+ipch/
+*.tlog
+*.lastbuildstate
+*.vcxproj.FileListAbsolute.txt
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.ipdb
+*.iobj
+*.pch
+*.recipe
+*.log
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.VC.opendb
+# Binaries we build
+*.exe
+*.dll
+*.sys
+*.lib
+*.exp
+# Signing / test certs
+*.pfx
+*.cer
+# OS junk
+Desktop.ini
+Thumbs.db
+.DS_Store
