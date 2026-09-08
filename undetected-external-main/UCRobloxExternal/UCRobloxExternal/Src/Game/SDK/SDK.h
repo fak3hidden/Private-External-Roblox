@@ -321,11 +321,18 @@ namespace RBX {
     // Global Helper Functions
     // ==========================================
     inline void ModifyWalkspeed(const RbxInstance& humanoid, float newSpeed) {
-        if (humanoid.IsValid()) Coms->WriteMemory(humanoid.Addr + Offsets::Humanoid::Walkspeed, newSpeed);
+        if (!humanoid.IsValid()) return;
+        Coms->WriteMemory(humanoid.Addr + Offsets::Humanoid::Walkspeed, newSpeed);
+        // Mirror field (ref: metixud base): integrity compares Walkspeed vs WalkspeedCheck.
+        float chk = Coms->ReadMemory<float>(humanoid.Addr + Offsets::Humanoid::WalkspeedCheck);
+        if (chk >= 0.0f && chk <= 500.0f)
+            Coms->WriteMemory(humanoid.Addr + Offsets::Humanoid::WalkspeedCheck, newSpeed);
     }
 
     inline void ModifyJumpPower(const RbxInstance& humanoid, float newPower) {
-        if (humanoid.IsValid()) Coms->WriteMemory(humanoid.Addr + Offsets::Humanoid::JumpPower, newPower);
+        if (!humanoid.IsValid()) return;
+        Coms->WriteMemory(humanoid.Addr + Offsets::Humanoid::JumpPower, newPower);
+        Coms->WriteMemory(humanoid.Addr + 0x1AC, newPower); // mirror field (ref: metixud base)
     }
 
     inline float GetNumberValue(const RbxInstance& valObj) {
