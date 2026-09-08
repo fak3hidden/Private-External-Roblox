@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <cmath>
 #include <iostream>
+#include <chrono>
 #include <vector>
 #include <utility>
 
@@ -50,52 +51,70 @@ namespace Movement {
         wasSpaceDown = isSpaceDown;
     }
 
-    // Shadow-field WalkSpeed bypass: the script-visible WalkSpeed property (0x1D0,
-    // what Lua anti-cheats and the server read) is pinned at 16, while the internal
-    // WalkspeedCheck field (0x3BC, what the controller actually moves you with)
-    // carries the target speed. Guarded so a wrong offset can never corrupt memory.
+    // CFrame-based WalkSpeed: tops up real input movement with small per-frame
+    // position steps so total speed equals the slider value. Never touches the
+    // WalkSpeed property (what anti-cheats check), never fights the controller
+    // with velocity, and Y (gravity/jumps) is left entirely alone.
     inline void RunSpeed() {
         static bool prevEnabled = false;
-        static bool checkLogged = false;
+        static bool haveLast = false;
+        static RBX::Vec3 lastPos{ 0.0f, 0.0f, 0.0f };
+        static auto lastT = std::chrono::steady_clock::now();
 
-        auto restoreAll = []() {
+        auto restoreWalkSpeed = []() {
             auto ch = Globals::localPlayer.GetModelRef();
             if (ch.Addr == 0) return;
             auto hum = ch.FindChildByClass("Humanoid");
-            if (hum.Addr == 0) return;
-            Coms->WriteMemory<float>(hum.Addr + Offsets::Humanoid::Walkspeed, 16.0f);
-            float chk = Coms->ReadMemory<float>(hum.Addr + Offsets::Humanoid::WalkspeedCheck);
-            if (chk >= 0.0f && chk <= 500.0f)
-                Coms->WriteMemory<float>(hum.Addr + Offsets::Humanoid::WalkspeedCheck, 16.0f);
+            if (hum.Addr != 0)
+                Coms->WriteMemory<float>(hum.Addr + Offsets::Humanoid::Walkspeed, 16.0f);
         };
 
         if (!Vars::Local::speedEnabled) {
-            if (prevEnabled) { restoreAll(); prevEnabled = false; checkLogged = false; }
+            if (prevEnabled) { restoreWalkSpeed(); prevEnabled = false; haveLast = false; }
             return;
         }
-        if (!prevEnabled) { restoreAll(); prevEnabled = true; }
+        if (!prevEnabled) { restoreWalkSpeed(); prevEnabled = true; haveLast = false; }
 
         float target = Vars::Local::walkSpeed;
         if (target < 0.0f) target = 0.0f;
         if (target > 300.0f) target = 300.0f;
+        if (target < 1.0f) { haveLast = false; return; }
 
         auto character = Globals::localPlayer.GetModelRef();
-        if (character.Addr == 0) return;
+        if (character.Addr == 0) { haveLast = false; return; }
         auto humanoid = character.FindChildByClass("Humanoid");
-        if (humanoid.Addr == 0) return;
+        if (humanoid.Addr == 0) { haveLast = false; return; }
 
-        // Safety: only touch WalkspeedCheck if it reads as a sane speed-like float.
-        float chk = Coms->ReadMemory<float>(humanoid.Addr + Offsets::Humanoid::WalkspeedCheck);
-        if (!checkLogged) {
-            std::cout << "[Speed] WalkspeedCheck reads " << chk << "\n";
-            checkLogged = true;
+        // Fly owns movement while PlatformStand is set; never touch vehicles.
+        if (Coms->ReadMemory<bool>(humanoid.Addr + Offsets::Humanoid::PlatformStand)) { haveLast = false; return; }
+        if (Coms->ReadMemory<uintptr_t>(humanoid.Addr + Offsets::Humanoid::SeatPart) != 0) { haveLast = false; return; }
+
+        auto hrp = character.FindCharacterPart("HumanoidRootPart");
+        if (hrp.Addr == 0) { haveLast = false; return; }
+        uintptr_t prim = hrp.GetPrimitivePtr();
+        if (prim == 0) { haveLast = false; return; }
+
+        auto now = std::chrono::steady_clock::now();
+        float dt = std::chrono::duration<float>(now - lastT).count();
+        lastT = now;
+        if (dt <= 0.0001f || dt > 0.1f) { haveLast = false; return; } // hitch/tab-out: resync
+
+        RBX::Vec3 pos = Coms->ReadMemory<RBX::Vec3>(prim + Offsets::Primitive::Position);
+        if (!haveLast) { lastPos = pos; haveLast = true; return; }
+
+        float dx = pos.X - lastPos.X;
+        float dz = pos.Z - lastPos.Z;
+        float dist = sqrtf(dx * dx + dz * dz);
+        float want = target * dt;
+
+        if (dist > want * 4.0f + 1.0f) { lastPos = pos; return; } // teleport/fling: resync
+        if (dist > 0.0001f && dist < want) {
+            float extra = want - dist;
+            pos.X += dx / dist * extra;
+            pos.Z += dz / dist * extra;
+            Coms->WriteMemory<RBX::Vec3>(prim + Offsets::Primitive::Position, pos);
         }
-        if (!(chk >= 0.0f && chk <= 500.0f)) return;
-
-        // Pin the script-visible property at 16 (what Lua/server checks read)...
-        Coms->WriteMemory<float>(humanoid.Addr + Offsets::Humanoid::Walkspeed, 16.0f);
-        // ...while the controller runs at target speed.
-        Coms->WriteMemory<float>(humanoid.Addr + Offsets::Humanoid::WalkspeedCheck, target);
+        lastPos = pos;
     }
 
     inline void RunNoclip() {
