@@ -6,7 +6,20 @@
 
 namespace Rage {
     inline void RunRage() {
-        if (!Vars::Rage::antiAim) return;
+        static bool wasOn = false;
+        if (!Vars::Rage::antiAim) {
+            if (wasOn) {
+                wasOn = false;
+                auto character = Globals::localPlayer.GetModelRef();
+                if (character.Addr != 0) {
+                    auto humanoid = character.FindChildByClass("Humanoid");
+                    if (humanoid.Addr != 0)
+                        Coms->WriteMemory<std::uint8_t>(humanoid.Addr + Offsets::Humanoid::AutoRotate, 1);
+                }
+            }
+            return;
+        }
+        wasOn = true;
 
         static float angle = 0.0f;
         angle += 0.067f;

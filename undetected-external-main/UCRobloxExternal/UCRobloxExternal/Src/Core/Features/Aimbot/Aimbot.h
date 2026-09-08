@@ -169,13 +169,17 @@ namespace Aimbot {
     }
     
     // --- Silent Aim (MouseService write) ---
-    // Finds MouseService -> InputObject, then writes the target screen pos to MousePosition
+    // Finds MouseService -> InputObject, then writes the target screen pos to MousePosition.
+    // MouseService is resolved from the DataModel (static pointers change every build).
     inline void WriteSilentMousePos(RBX::Vec2 screenPos) {
-        // MouseService lives at a static pointer in the module
-        uintptr_t msBase = Coms->ReadMemory<uintptr_t>(Coms->GetBase() + Offsets::MouseService::SensitivityPointer);
+        uintptr_t msBase = 0;
+        if (Globals::dataModel.Addr != 0)
+            msBase = Globals::dataModel.FindChildByClass("MouseService").Addr;
         if (msBase == 0) return;
-        // InputObject is a shared_ptr at +0x100; the raw ptr is 8 bytes into the shared_ptr
+        // InputObject is a shared_ptr; the raw ptr sits 8 bytes in. Two known layouts: try both.
         uintptr_t inputObj = Coms->ReadMemory<uintptr_t>(msBase + Offsets::MouseService::InputObject + 0x8);
+        if (inputObj == 0 || inputObj == 0xFFFFFFFFFFFFFFFF)
+            inputObj = Coms->ReadMemory<uintptr_t>(msBase + Offsets::MouseService::InputObject2 + 0x8);
         if (inputObj == 0 || inputObj == 0xFFFFFFFFFFFFFFFF) return;
         RBX::Vec2 pos = { screenPos.X, screenPos.Y };
         Coms->WriteMemory<RBX::Vec2>(inputObj + Offsets::MouseService::MousePosition, pos);

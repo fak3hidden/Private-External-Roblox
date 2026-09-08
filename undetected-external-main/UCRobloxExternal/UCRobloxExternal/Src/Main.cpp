@@ -162,6 +162,36 @@ bool RescanPointers(uintptr_t baseAddr) {
 
         }
 
+        // --- Auto-detect Humanoid::Health (0x190 vs 0x188 across dumps) ---
+        // Oracle: a living humanoid's Health falls within (0, MaxHealth].
+        {
+            uintptr_t bestH = 0;
+            float bestScore = 3.4028235e38f;
+            auto lch = Globals::localPlayer.GetModelRef();
+            if (lch.Addr != 0) {
+                auto lhum = lch.FindChildByClass("Humanoid");
+                if (lhum.Addr != 0) {
+                    float maxH = Coms->ReadMemory<float>(lhum.Addr + Offsets::Humanoid::MaxHealth);
+                    if (maxH > 0.0f && maxH <= 100000.0f) {
+                        const uintptr_t hcands[] = { 0x190, 0x188 };
+                        for (uintptr_t hc : hcands) {
+                            float h = Coms->ReadMemory<float>(lhum.Addr + hc);
+                            if (h > 0.0f && h <= maxH) {
+                                float s = maxH - h;
+                                if (s < bestScore) { bestScore = s; bestH = hc; }
+                            }
+                        }
+                    }
+                }
+            }
+            if (bestH != 0) {
+                Offsets::Humanoid::Health = bestH;
+                std::cout << "[+] Humanoid::Health resolved: 0x" << std::hex << bestH << std::dec << "\n";
+            } else {
+                std::cout << "[!] Humanoid::Health unresolved, keeping 0x" << std::hex << Offsets::Humanoid::Health << std::dec << "\n";
+            }
+        }
+
         return (Globals::dataModel.Addr != 0 && Globals::workspace.Addr != 0);
     }
     catch (...) {

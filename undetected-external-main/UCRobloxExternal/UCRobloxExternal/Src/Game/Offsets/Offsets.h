@@ -210,7 +210,7 @@ namespace Offsets {
         inline constexpr uintptr_t DisplayName = 0xb8;
         inline constexpr uintptr_t EvaluateStateMachine = 0x1d8;
         inline constexpr uintptr_t FloorMaterial = 0x184;
-        inline constexpr uintptr_t Health = 0x190;
+        inline uintptr_t Health = 0x190; // Auto-resolved in RescanPointers (0x190 vs 0x188 across dumps)
         inline constexpr uintptr_t HealthDisplayDistance = 0x188;
         inline constexpr uintptr_t HealthDisplayType = 0x18c;
         inline constexpr uintptr_t HipHeight = 0x194;

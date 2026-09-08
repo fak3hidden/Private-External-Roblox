@@ -268,3 +268,4 @@ namespace Movement {
         }
     }
 }
+\nauto nclipParent = part.GetParent();\nif (nclipParent.IsValid()) { std::string npc = nclipParent.GetClass(); if (npc == "Accessory" || npc == "Hat") continue; }
