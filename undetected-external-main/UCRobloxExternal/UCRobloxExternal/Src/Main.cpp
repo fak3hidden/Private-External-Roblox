@@ -1,5 +1,6 @@
 #include "Memory/Communication.h"
 #include "Game/Offsets/Offsets.h"
+#include "Game/Offsets/Updater.h"
 #include "Game/SDK/SDK.h"
 #include "Game/W2S/W2S.h"
 #include "Render/Render.h"
@@ -407,6 +408,11 @@ int main() {
     auto baseAddr = Coms->GetBase();
     std::cout << "[+] Process ID: " << Coms->GetPID() << "\n";
     std::cout << "[+] Base Address: 0x" << std::hex << baseAddr << std::dec << "\n";
+
+    // Auto-refresh offsets from the live dump BEFORE the first scan. Only
+    // applies when the dump's version matches the running build (safe fallback
+    // to baked values otherwise).
+    Offsets::AutoUpdate(Coms->GetHandle());
 
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
