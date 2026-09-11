@@ -109,6 +109,13 @@ namespace Movement {
         for (auto& part : parts) {
             if (part.GetClass() != "Part" && part.GetClass() != "MeshPart") continue;
 
+            // Skip accessories/hats so only body parts get noclip'd.
+            auto nclipParent = part.GetParent();
+            if (nclipParent.IsValid()) {
+                std::string npc = nclipParent.GetClass();
+                if (npc == "Accessory" || npc == "Hat") continue;
+            }
+
             uintptr_t prim = part.GetPrimitivePtr();
             if (prim == 0) continue;
 
@@ -268,4 +275,3 @@ namespace Movement {
         }
     }
 }
-\nauto nclipParent = part.GetParent();\nif (nclipParent.IsValid()) { std::string npc = nclipParent.GetClass(); if (npc == "Accessory" || npc == "Hat") continue; }
