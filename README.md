@@ -42,6 +42,8 @@ Manual builds:
 
 ## updating
 
-Double-click `update.cmd` (or run `git pull`). It replaces local files with the
-latest committed version — so don't hand-edit tracked files and expect changes
-to survive an update; commit them instead.
+Double-click `update.cmd`. It replaces local files with the latest committed
+version — no git required (it downloads the branch ZIP and copies it over; if
+git is installed it uses that instead, which also makes a plain `git pull` work
+here afterwards). Updates discard local edits to tracked files, so don't
+hand-edit files and expect changes to survive; commit them instead.
